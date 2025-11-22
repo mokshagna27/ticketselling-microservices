@@ -1,218 +1,447 @@
 
+
 # Ticket Selling Microservices 🎫
 
-A microservices-based **ticket booking backend** built with **Spring Boot 3**, **Kafka**, **MySQL**, **Spring Cloud Gateway (MVC)**, **Keycloak** for authentication, and **Resilience4j** for fault tolerance. The system models a complete event ticketing workflow: users create bookings, bookings generate events to Kafka, the order service consumes these events to create orders, and inventory is updated accordingly.
+A microservices-based **ticket booking backend** built with **Spring Boot 3**, **Kafka**, **MySQL**, **Spring Cloud Gateway (MVC)**, **Keycloak** for security, and **Resilience4j** for fault tolerance.
+
+This project models a simplified ticketing system with:
+- **Inventory Service** for venues/events and capacities
+- **Booking Service** for creating bookings
+- **Order Service** for consuming booking events and finalizing orders
+- **API Gateway** for routing, auth, and aggregated API docs
+
 
 ---
 
 ## 🧠 High-Level Overview
 
-```
+When a user books tickets:
 
-Client → API Gateway (8090)
-│
-├── Booking Service (8081)
-│        │
-│        └── calls Inventory Service (8080)
-│
-└── Order Service (8082) ← consumes Kafka topic "booking"
-│
-└── updates Inventory Service (8080)
+1. **Client → API Gateway**  
+   Request goes to the gateway on `localhost:8090`.
 
-```
+2. **Gateway → Booking Service (8081)**  
+   Booking service:
+   - Validates the request
+   - Calls **Inventory Service** to fetch event capacity & ticket price
+   - Creates a **Customer** record
+   - Builds a `BookingEvent` payload
 
-Core responsibilities:
-- **Booking Service**: validates capacity, creates customers, publishes `BookingEvent` to Kafka  
-- **Order Service**: consumes events, creates orders, reduces event capacity  
-- **Inventory Service**: manages venues, events, capacities  
-- **API Gateway**: authentication, routing, Swagger aggregation, circuit breaking  
+3. **Booking Service → Kafka**  
+   Booking service publishes a `BookingEvent` to the `booking` topic.
 
-The project uses a single MySQL database (`ticketing`) but isolated service layers.
+4. **Order Service (8082) → Kafka**  
+   Order service consumes `BookingEvent`:
+   - Persists an `Order` entity
+   - Calls **Inventory Service** to reduce available capacity.
 
----
+5. **Inventory Service (8080)**  
+   Updates the remaining capacity for the booked event.
 
-## ✨ Features
-
-- Create/update/manage event bookings  
-- Capacity validation against Inventory Service  
-- Event-driven communication via Kafka (`booking` topic)  
-- Order creation upon booking events  
-- Capacity decrement for events  
-- JWT authentication via Keycloak at API Gateway  
-- Circuit breaker, retry, timeout (Resilience4j)  
-- Swagger/OpenAPI documentation aggregated at the gateway  
-- Clean Controller → Service → Repository architecture  
+All calls go through the gateway in a real deployment; direct service ports are mostly for local dev/testing.
 
 ---
 
-## 🧰 Tech Stack
+## 🏗️ Architecture
 
-**Backend**  
-- Java 17  
-- Spring Boot 3.4.x  
-- Spring Web / MVC  
-- Spring Data JPA  
+```text
+             [ Client ]
+                 │
+                 ▼
+        ┌────────────────┐
+        │  API Gateway   │  Port: 8090
+        │  (Spring Cloud │
+        │   Gateway MVC) │
+        └───────┬────────┘
+                │
+     ┌──────────┼───────────┐
+     ▼          ▼           ▼
+[Booking]   [Inventory]  [Order]
+ Service     Service      Service
+ Port 8081   Port 8080   Port 8082
 
-**Infrastructure**  
-- Apache Kafka  
-- MySQL  
-- Spring Cloud Gateway (MVC)  
-- Resilience4j  
-- Springdoc OpenAPI  
+Booking <──Kafka topic "booking"──┐
+                                  ▼
+                               Order
 
-**Security**  
-- Keycloak (JWT validation via JWK)  
-- Spring Security OAuth2 Resource Server  
+MySQL "ticketing" DB shared across services
+Keycloak for JWT auth (used at the gateway)
+Resilience4j at the gateway for circuit-breaking & retries
+OpenAPI/Swagger UI aggregated via the gateway
 
----
+✨ Features
 
-## 🧩 Microservices Overview
+Create ticket bookings for an event
 
-### 🔹 API Gateway (`apigateway`)
-**Port:** 8090  
-**Responsibilities:**
-- Central entry point for all traffic  
-- Validates JWT tokens using Keycloak JWK  
-- Routes requests to booking/inventory/order services  
-- Aggregates Swagger docs:
-  - `http://localhost:8090/swagger-ui.html`
-- Circuit breaker, retry, timeout configuration via Resilience4j  
+Validate available capacity before booking
 
-Key config:
-```
+Maintain customer, event, venue, and order data
+
+Asynchronous order processing using Kafka (booking topic)
+
+Inventory update after order creation
+
+API Gateway:
+
+Routes traffic to booking & inventory services
+
+Aggregates Swagger docs for both services
+
+Secures endpoints using Keycloak JWT
+
+Circuit breaker, retry, timeout via Resilience4j
+
+MySQL persistence via Spring Data JPA
+
+Clean Controller–Service–Repository layering
+
+🧰 Tech Stack
+
+Core
+
+Java 17+
+
+Spring Boot 3.4.x
+
+Spring Web / Spring MVC
+
+Spring Data JPA
+
+Spring Cloud Gateway (MVC)
+
+Spring Security OAuth2 Resource Server
+
+Apache Kafka
+
+Resilience4j
+
+Springdoc OpenAPI (Swagger)
+
+MySQL
+
+Security
+
+Keycloak (JWT, realms, roles)
+
+Gateway-level auth via JWT using the JWK set URI
+
+Build
+
+Maven
+
+🧩 Services Breakdown
+1. API Gateway (apigateway)
+
+Port: 8090
+Responsibilities:
+
+Acts as the single entry point
+
+Uses Spring Cloud Gateway MVC routing functions
+
+Validates JWTs against Keycloak (via JWK set URI)
+
+Configures circuit breakers, retries, and timeouts using Resilience4j
+
+Aggregates Swagger docs for:
+
+Inventory Service: /docs/inventoryservice/v3/api-docs
+
+Booking Service: /docs/bookingservice/v3/api-docs
+
+Exposes a unified Swagger UI at:
+http://localhost:8090/swagger-ui.html
+
+Key config (excerpt) – apigateway/src/main/resources/application.properties:
 
 server.port=8090
-keycloak.auth.jwk-set-uri=[http://localhost:8091/realms/ticketing-security-realm/protocol/openid-connect/certs](http://localhost:8091/realms/ticketing-security-realm/protocol/openid-connect/certs)
-springdoc.swagger-ui.path=/swagger-ui.html
 
-````
+keycloak.auth.jwk-set-uri=http://localhost:8091/realms/ticketing-security-realm/protocol/openid-connect/certs
 
----
+swagger-ui + doc URLs
 
-### 🔹 Inventory Service (`inventoryservice`)
-**Port:** 8080  
-**Base Path:** `/api/v1/inventory`
+security.excluded.urls to allow docs without auth
 
-**Responsibilities:**
-- Manages events + venue capacity  
-- Provides event details, capacity, ticket price  
-- Reduces capacity after orders  
+Resilience4j circuit breaker, retry, and timelimiter defaults
 
-APIs:
-- `GET /event/{eventId}` → get capacity + price  
-- `PUT /event/{eventId}/capacity/{count}` → reduce capacity  
+2. Inventory Service (inventoryservice)
+
+Port: 8080
+Base Path (by convention): /api/v1/inventory
+(confirmed by inventory.service.url in booking/order services)
+
+Responsibilities:
+
+Manages Venue and Event inventory
+
+Exposes APIs for:
+
+Getting inventory for all venues/events
+
+Getting inventory for a single event
+
+Updating event capacity after a booking
+
+Key pieces:
+
+InventoryController
+
+GET /api/v1/inventory/event/{eventId}
+→ returns EventInventoryResponse
+
+PUT /api/v1/inventory/event/{eventId}/capacity/{capacity}
+→ subtracts capacity from leftCapacity of the event
+
+InventoryService
+
+Uses EventRepository and VenueRepository
+
+Converts entities into EventInventoryResponse / VenueInventoryResponse
 
 Entities:
-- `Event` (id, name, address, totalCapacity, leftCapacity, ticketPrice, venue)  
-- `Venue` (id, name, address, totalCapacity)  
 
----
+Event – includes fields like id, name, address, totalCapacity, leftCapacity, ticketPrice, venue
 
-### 🔹 Booking Service (`bookingservice`)
-**Port:** 8081  
-**Base Path:** `/api/v1/booking`
+Venue – id, name, address, totalCapacity
 
-**Responsibilities:**
-- Accept user booking requests  
-- Fetch event info from Inventory Service  
-- Validate capacity  
-- Create Customer entry  
-- Publish `BookingEvent` to Kafka  
+Config: inventoryservice/src/main/resources/application.properties
 
-`BookingEvent` contains:
-```java
-{
-  userId,
-  eventId,
-  ticketCount,
-  totalPrice
-}
-````
+server.port=8080
 
-Kafka config:
+spring.datasource.url=jdbc:mysql://localhost:3306/ticketing
 
-```
-spring.kafka.bootstrap-servers=localhost:9092
-spring.kafka.template.default-topic=booking
-```
+spring.jpa.hibernate.ddl-auto=none
 
-Example request:
+OpenAPI paths for Swagger
 
-```json
+Note: DDL is not auto-generated. You must create tables manually – entities include SQL comments as hints.
+
+3. Booking Service (bookingservice)
+
+Port: 8081
+Base Path: /api/v1
+
+Responsibilities:
+
+Handles booking requests
+
+Talks to Inventory Service to validate event capacity and price
+
+Creates Customer record
+
+Constructs a BookingEvent and publishes it to Kafka
+
+Key components:
+
+BookingController
+
+POST /api/v1/booking
+Request body (BookingRequest):
+
 {
   "userId": 1,
   "eventId": 100,
   "ticketCount": 2
 }
-```
 
----
 
-### 🔹 Order Service (`orderservice`)
+Response (BookingResponse):
 
-**Port:** 8082
+{
+  "userId": 1,
+  "eventId": 100,
+  "ticketCount": 2,
+  "totalPrice": 500.00,
+  "message": "Booking created successfully"
+}
 
-**Responsibilities:**
 
-* Consumes `BookingEvent` from Kafka topic `booking`
-* Creates an `Order` entity
-* Calls Inventory Service to reduce event capacity
+(Fields inferred from BookingResponse structure.)
 
-Order entity fields:
+BookingService
 
-* id
-* ticketCount
-* totalPrice
-* placedAt
-* customerId
-* eventId
+Calls InventoryServiceClient → GET {inventory.service.url}/event/{eventId}
+
+Maps InventoryResponse (capacity, ticketPrice, venue)
+
+Persists a Customer via CustomerRepository
+
+Publishes BookingEvent to Kafka using KafkaTemplate<String, BookingEvent>
+
+InventoryServiceClient
+
+Uses inventory.service.url from config:
+
+inventory.service.url=http://localhost:8080/api/v1/inventory
+
+
+Fetches InventoryResponse for an event
+
+BookingEvent (Kafka payload)
+
+public class BookingEvent {
+    private Long userId;
+    private Long eventId;
+    private Long ticketCount;
+    private BigDecimal totalPrice;
+}
+
+
+Customer entity
+
+id, name, email, address
+
+Mapped to customer table (SQL blueprint is in the comment)
+
+Config: bookingservice/src/main/resources/application.properties
+
+server.port=8081
+
+MySQL connection to ticketing DB
+
+Kafka:
+
+spring.kafka.bootstrap-servers=localhost:9092
+
+spring.kafka.template.default-topic=booking
+
+OpenAPI paths for Swagger
+
+4. Order Service (orderservice)
+
+Port: 8082
+
+Responsibilities:
+
+Consumes BookingEvent messages from Kafka
+
+Creates and stores Order entities
+
+Calls Inventory Service to reduce remaining capacity
+
+Key components:
+
+OrderService
+
+Annotated with @KafkaListener on the booking topic (configured in properties)
+
+On each BookingEvent:
+
+Maps it to an Order entity
+
+Saves via OrderRepository
+
+Calls InventoryServiceClient.updateInventory(eventId, ticketCount)
+
+Logs inventory updates
+
+Order entity (simplified)
+
+public class Order {
+    private Long id;
+    private BigDecimal totalPrice;
+    private Long ticketCount;
+    private LocalDateTime placedAt;
+    private Long customerId;
+    private Long eventId;
+}
+
+
+InventoryServiceClient
+
+Reads inventory.service.url from config:
+
+inventory.service.url=http://localhost:8080/api/v1/inventory
+
+
+PUT {inventory.service.url}/event/{eventId}/capacity/{ticketCount}
+
+Uses RestTemplate internally
+
+Config: orderservice/src/main/resources/application.properties
+
+server.port=8082
+
+MySQL ticketing database
 
 Kafka consumer:
 
-```
+spring.kafka.bootstrap-servers=localhost:9092
+
 spring.kafka.consumer.group-id=order-service
-spring.kafka.consumer.value-deserializer=JsonDeserializer
-```
 
----
+JSON deserializer for BookingEvent
 
-## 🚀 Getting Started
+inventory.service.url=http://localhost:8080/api/v1/inventory
 
-### 1️⃣ Prerequisites
+🚀 Getting Started
+1. Prerequisites
 
-* Java 17
-* Maven
-* MySQL running with a database named `ticketing`
-* Kafka + Zookeeper running on `localhost:9092`
-* Keycloak running (for JWT auth)
+Java 17+
 
-### 2️⃣ Clone the Repository
+Maven
 
-```bash
+MySQL running with a database named ticketing
+
+Kafka + Zookeeper running locally on localhost:9092
+
+Keycloak running (for JWT validation at the gateway)
+
+Tables created according to your entities:
+
+customer, order, event, venue, etc.
+(Entities contain comments with sample DDL.)
+
+2. Clone the repository
 git clone https://github.com/mokshagna27/ticketselling-microservices.git
 cd ticketselling-microservices
-```
 
-### 3️⃣ Configure MySQL
+3. Configure MySQL
 
-In each service:
+Update the spring.datasource.* properties in these files if needed:
 
-```
+bookingservice/src/main/resources/application.properties
+
+inventoryservice/src/main/resources/application.properties
+
+orderservice/src/main/resources/application.properties
+
+Example:
+
 spring.datasource.url=jdbc:mysql://localhost:3306/ticketing
 spring.datasource.username=root
 spring.datasource.password=your_password
 spring.jpa.hibernate.ddl-auto=none
-```
 
-Make sure required tables exist (`event`, `venue`, `customer`, `order`).
-Entities include SQL schema inside comments.
 
-### 4️⃣ Start Services
+Make sure the ticketing database and required tables exist. JPA will not auto-create them (ddl-auto=none).
 
-In order:
+4. Configure Kafka
 
-```bash
-cd inventoryservice
+Ensure Kafka is running on:
+
+spring.kafka.bootstrap-servers=localhost:9092
+
+
+by default in booking & order services.
+
+5. Configure Keycloak (Gateway)
+
+In apigateway/src/main/resources/application.properties:
+
+keycloak.auth.jwk-set-uri=http://localhost:8091/realms/ticketing-security-realm/protocol/openid-connect/certs
+
+
+Set this to your Keycloak realm's JWK set URI.
+
+6. Run the services
+
+From the project root, you can run each service:
+
+cd apigateway
+mvn spring-boot:run
+
+cd ../inventoryservice
 mvn spring-boot:run
 
 cd ../bookingservice
@@ -221,49 +450,45 @@ mvn spring-boot:run
 cd ../orderservice
 mvn spring-boot:run
 
-cd ../apigateway
-mvn spring-boot:run
-```
 
----
+Order doesn’t strictly matter, but a good flow is:
+Inventory → Booking → Order → Gateway.
 
-## 🔍 Testing the Flow
+🔍 Testing the Flow (Happy Path)
 
-### Step 1: Check event inventory
+Ensure inventory exists
+Insert venue and event rows into the ticketing DB with some left_capacity and ticket_price.
 
-```
+Call Inventory API (direct or via gateway)
+
 GET http://localhost:8080/api/v1/inventory/event/{eventId}
-```
+to confirm event capacity.
 
-### Step 2: Create a booking
+Create a booking
 
-```
 POST http://localhost:8081/api/v1/booking
-```
+or via gateway route once configured.
 
-Body:
+Example body:
 
-```json
 {
   "userId": 1,
   "eventId": 100,
   "ticketCount": 2
 }
-```
-
-### Step 3: Kafka event fired
-
-`BookingService` → topic `booking`
-
-### Step 4: Order created
-
-`OrderService` consumes the message → stores order in DB.
-
-### Step 5: Inventory updated
-
-`OrderService` → Inventory → reduce capacity
 
 
+Observe Kafka + Order Service
+
+Booking service publishes BookingEvent to Kafka.
+
+Order service consumes it, creates an order, logs inventory update.
+
+Verify DB
+
+Check order table for a new order row.
+
+Check event.left_capacity is reduced accordingly.
 
 
 
